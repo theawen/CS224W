@@ -85,7 +85,7 @@ def main():
     parser.add_argument('--device', type=int, default=0)
     parser.add_argument('--log_steps', type=int, default=10)
     parser.add_argument('--num_layers', type=int, default=16)
-    parser.add_argument('--hidden_channels', type=int, default=64) #256
+    parser.add_argument('--hidden_channels', type=int, default=256) #256
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--weight_decay', type=float, default=0, help='weight decay (L2 loss on parameters).')
     parser.add_argument('--lr', type=float, default=0.001)
