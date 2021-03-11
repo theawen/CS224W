@@ -158,7 +158,7 @@ def run(args, graph, labels, train_idx, val_idx, test_idx, evaluator, n_running)
             l.append(e)
 
     print("*" * 50)
-    print(f"Best val acc: {best_val_acc}, Final test acc: {final_test_acc}")
+    print(f"Best val acc: {best_val_acc}, Best test acc: {best_test_acc}")
     print("*" * 50)
 
     if args.plot_curves:
