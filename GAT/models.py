@@ -236,154 +236,6 @@ class GATConv(nn.Module):
             return rst
 
 
-# class GATConv(nn.Module):
-#     def __init__(
-#         self,
-#         node_feats,
-#         edge_feats,
-#         out_feats,
-#         n_heads=1,
-#         attn_drop=0.0,
-#         edge_drop=0.0,
-#         negative_slope=0.2,
-#         residual=True,
-#         activation=None,
-#         use_attn_dst=True,
-#         allow_zero_in_degree=True,
-#         use_symmetric_norm=False,
-#     ):
-#         super(GATConv, self).__init__()
-#         self._n_heads = n_heads
-#         self._in_src_feats, self._in_dst_feats = expand_as_pair(node_feats)
-#         self._out_feats = out_feats
-#         self._allow_zero_in_degree = allow_zero_in_degree
-#         self._use_symmetric_norm = use_symmetric_norm
-
-#         # feat fc
-#         self.src_fc = nn.Linear(self._in_src_feats, out_feats * n_heads, bias=False)
-#         if residual:
-#             self.dst_fc = nn.Linear(self._in_src_feats, out_feats * n_heads)
-#             self.bias = None
-#         else:
-#             self.dst_fc = None
-#             self.bias = nn.Parameter(out_feats * n_heads)
-
-#         # attn fc
-#         self.attn_src_fc = nn.Linear(self._in_src_feats, n_heads, bias=False)
-#         if use_attn_dst:
-#             self.attn_dst_fc = nn.Linear(self._in_src_feats, n_heads, bias=False)
-#         else:
-#             self.attn_dst_fc = None
-#         if edge_feats > 0:
-#             self.attn_edge_fc = nn.Linear(edge_feats, n_heads, bias=False)
-#         else:
-#             self.attn_edge_fc = None
-
-#         self.attn_drop = nn.Dropout(attn_drop)
-#         self.edge_drop = edge_drop
-#         self.leaky_relu = nn.LeakyReLU(negative_slope, inplace=True)
-#         self.activation = activation
-
-#         self.reset_parameters()
-
-#     def reset_parameters(self):
-#         gain = nn.init.calculate_gain("relu")
-#         nn.init.xavier_normal_(self.src_fc.weight, gain=gain)
-#         if self.dst_fc is not None:
-#             nn.init.xavier_normal_(self.dst_fc.weight, gain=gain)
-
-#         nn.init.xavier_normal_(self.attn_src_fc.weight, gain=gain)
-#         if self.attn_dst_fc is not None:
-#             nn.init.xavier_normal_(self.attn_dst_fc.weight, gain=gain)
-#         if self.attn_edge_fc is not None:
-#             nn.init.xavier_normal_(self.attn_edge_fc.weight, gain=gain)
-
-#         if self.bias is not None:
-#             nn.init.zeros_(self.bias)
-
-#     def set_allow_zero_in_degree(self, set_value):
-#         self._allow_zero_in_degree = set_value
-
-#     def forward(self, graph, feat_src, feat_edge=None):
-#         with graph.local_scope():
-#             if not self._allow_zero_in_degree:
-#                 if (graph.in_degrees() == 0).any():
-#                     assert False
-
-#             if graph.is_block:
-#                 feat_dst = feat_src[: graph.number_of_dst_nodes()]
-#             else:
-#                 feat_dst = feat_src
-
-#             if self._use_symmetric_norm:
-#                 degs = graph.out_degrees().float().clamp(min=1)
-#                 norm = torch.pow(degs, -0.5)
-#                 shp = norm.shape + (1,) * (feat_src.dim() - 1)
-#                 norm = torch.reshape(norm, shp)
-#                 feat_src = feat_src * norm
-
-#             feat_src_fc = self.src_fc(feat_src).view(-1, self._n_heads, self._out_feats)
-#             feat_dst_fc = self.dst_fc(feat_dst).view(-1, self._n_heads, self._out_feats)
-#             attn_src = self.attn_src_fc(feat_src).view(-1, self._n_heads, 1)
-
-#             # NOTE: GAT paper uses "first concatenation then linear projection"
-#             # to compute attention scores, while ours is "first projection then
-#             # addition", the two approaches are mathematically equivalent:
-#             # We decompose the weight vector a mentioned in the paper into
-#             # [a_l || a_r], then
-#             # a^T [Wh_i || Wh_j] = a_l Wh_i + a_r Wh_j
-#             # Our implementation is much efficient because we do not need to
-#             # save [Wh_i || Wh_j] on edges, which is not memory-efficient. Plus,
-#             # addition could be optimized with DGL's built-in function u_add_v,
-#             # which further speeds up computation and saves memory footprint.
-#             graph.srcdata.update({"feat_src_fc": feat_src_fc, "attn_src": attn_src})
-
-#             if self.attn_dst_fc is not None:
-#                 attn_dst = self.attn_dst_fc(feat_dst).view(-1, self._n_heads, 1)
-#                 graph.dstdata.update({"attn_dst": attn_dst})
-#                 graph.apply_edges(fn.u_add_v("attn_src", "attn_dst", "attn_node"))
-#             else:
-#                 graph.apply_edges(fn.copy_u("attn_src", "attn_node"))
-
-#             e = graph.edata["attn_node"]
-#             if feat_edge is not None:
-#                 attn_edge = self.attn_edge_fc(feat_edge).view(-1, self._n_heads, 1)
-#                 graph.edata.update({"attn_edge": attn_edge})
-#                 e += graph.edata["attn_edge"]
-#             e = self.leaky_relu(e)
-
-#             if self.training and self.edge_drop > 0:
-#                 perm = torch.randperm(graph.number_of_edges(), device=e.device)
-#                 bound = int(graph.number_of_edges() * self.edge_drop)
-#                 eids = perm[bound:]
-#                 graph.edata["a"] = torch.zeros_like(e)
-#                 graph.edata["a"][eids] = self.attn_drop(edge_softmax(graph, e[eids], eids=eids))
-#             else:
-#                 graph.edata["a"] = self.attn_drop(edge_softmax(graph, e))
-
-#             # message passing
-#             graph.update_all(fn.u_mul_e("feat_src_fc", "a", "m"), fn.sum("m", "feat_src_fc"))
-#             rst = graph.dstdata["feat_src_fc"]
-
-#             if self._use_symmetric_norm:
-#                 degs = graph.in_degrees().float().clamp(min=1)
-#                 norm = torch.pow(degs, 0.5)
-#                 shp = norm.shape + (1,) * (feat_dst.dim())
-#                 norm = torch.reshape(norm, shp)
-#                 rst *= norm
-
-#             # residual
-#             if self.dst_fc is not None:
-#                 rst += feat_dst_fc
-#             else:
-#                 rst += self.bias
-
-#             # activation
-#             if self.activation is not None:
-#                 rst = self.activation(rst, inplace=True)
-
-#             return rst
-
 
 class GAT(nn.Module):
     def __init__(
@@ -458,3 +310,107 @@ class GAT(nn.Module):
         h = self.bias_last(h)
 
         return h
+    
+
+# # PGNN layer, only pick closest node for message passing
+class PGNN_layer(nn.Module):
+    def __init__(self, input_dim, output_dim,dist_trainable=True):
+        super(PGNN_layer, self).__init__()
+        self.input_dim = input_dim
+        self.dist_trainable = dist_trainable
+
+        if self.dist_trainable:
+            self.dist_compute = Nonlinear(1, output_dim, 1)
+
+        self.linear_hidden = nn.Linear(input_dim*2, output_dim)
+        self.linear_out_position = nn.Linear(output_dim,1)
+        self.act = nn.ReLU()
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data = init.xavier_uniform_(m.weight.data, gain=nn.init.calculate_gain('relu'))
+                if m.bias is not None:
+                    m.bias.data = init.constant_(m.bias.data, 0.0)
+
+    def forward(self, feature, dists_max, dists_argmax):
+        if self.dist_trainable:
+            dists_max = self.dist_compute(dists_max.unsqueeze(-1)).squeeze()
+
+        subset_features = feature[dists_argmax.flatten(), :]
+        subset_features = subset_features.reshape((dists_argmax.shape[0], dists_argmax.shape[1],
+                                                   feature.shape[1]))
+        messages = subset_features * dists_max.unsqueeze(-1)
+
+        self_feature = feature.unsqueeze(1).repeat(1, dists_max.shape[1], 1)
+        messages = torch.cat((messages, self_feature), dim=-1)
+
+        messages = self.linear_hidden(messages).squeeze()
+        messages = self.act(messages) # n*m*d
+
+        out_position = self.linear_out_position(messages).squeeze(-1)  # n*m_out
+        out_structure = torch.mean(messages, dim=1)  # n*d
+
+        return out_position, out_structure
+  
+    
+### Non linearity
+class Nonlinear(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(Nonlinear, self).__init__()
+
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.linear2 = nn.Linear(hidden_dim, output_dim)
+
+        self.act = nn.ReLU()
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data = init.xavier_uniform_(m.weight.data, gain=nn.init.calculate_gain('relu'))
+                if m.bias is not None:
+                    m.bias.data = init.constant_(m.bias.data, 0.0)
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.act(x)
+        x = self.linear2(x)
+        return x
+
+      
+# PGNN MODEL
+class PGNN(nn.Module):
+    def __init__(self, input_dim, feature_dim, hidden_dim, output_dim,
+                 feature_pre=True, layer_num=2, dropout=True, **kwargs):
+        super(PGNN, self).__init__()
+        self.feature_pre = feature_pre
+        self.layer_num = layer_num
+        self.dropout = dropout
+        if layer_num == 1:
+            hidden_dim = output_dim
+        if feature_pre:
+            self.linear_pre = nn.Linear(input_dim, feature_dim)
+            self.conv_first = PGNN_layer(feature_dim, hidden_dim)
+        else:
+            self.conv_first = PGNN_layer(input_dim, hidden_dim)
+        if layer_num>1:
+            self.conv_hidden = nn.ModuleList([PGNN_layer(hidden_dim, hidden_dim) for i in range(layer_num - 2)])
+            self.conv_out = PGNN_layer(hidden_dim, output_dim)
+
+    def forward(self, data):
+        x = data.x
+        if self.feature_pre:
+            x = self.linear_pre(x)
+        x_position, x = self.conv_first(x, data.dists_max, data.dists_argmax)
+        if self.layer_num == 1:
+            return x_position
+        # x = F.relu(x) # Note: optional!
+        if self.dropout:
+            x = F.dropout(x, training=self.training)
+        for i in range(self.layer_num-2):
+            _, x = self.conv_hidden[i](x, data.dists_max, data.dists_argmax)
+            # x = F.relu(x) # Note: optional!
+            if self.dropout:
+                x = F.dropout(x, training=self.training)
+        x_position, x = self.conv_out(x, data.dists_max, data.dists_argmax)
+        x_position = F.normalize(x_position, p=2, dim=-1)
+        return x_position
+    
